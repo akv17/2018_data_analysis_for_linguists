@@ -1,0 +1,157 @@
+---
+title: "hw3"
+author: "KopetskyA"
+date: '5 марта 2018 г '
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(bootstrap)
+library(binom)
+```
+
+
+### 1.1
+
+
+```{r}
+df <- read.csv("https://raw.githubusercontent.com/agricolamz/2018_data_analysis_for_linguists/master/data/students/akv17/hw3_binomial_ci/hw3_wodehouse.csv",
+               stringsAsFactors = F,
+               encoding = "UTF-8")
+
+fill_n_words <- function(df){
+  df <- mutate(df, n_words = 1:nrow(df))
+  for (ch in unique(df$chapter)){
+    df$n_words[df$chapter == ch] = sum(df$chapter == ch)
+  }
+  return(df)
+}  
+
+fill_word_freq <- function(df){
+  df <- mutate(df, freq = 1:nrow(df))
+  for (ch in unique(df$chapter)){
+    for (w in unique(df$word[df$chapter == ch])){
+      df$freq[df$chapter == ch & df$word == w] = sum(df$chapter == ch & df$word == w) 
+    }
+  }
+  return(df)
+}
+
+
+df <- fill_n_words(df)
+# ~20 secs on i7 
+df <- fill_word_freq(df)
+df <- df[,c(1, 3, 4, 5)]
+df <- df[!duplicated(df),]
+df <- mutate(df, average = df$freq / df$n_words)
+
+df %>%
+  filter(word == "сэр") %>%
+  summarise(grand_mean = mean(average)) ->
+  grand_mean
+grand_mean
+```
+
+
+### 1.2
+
+
+```{r}
+df_bs <- filter(df, df$word == 'сэр')
+df_bs <- bootstrap(df_bs$average, 10000, mean)$thetastar 
+
+bs_stats <- tibble(mean = mean(df_bs),
+                   ci_lower = quantile(df_bs, 0.025),
+                   ci_upper = quantile(df_bs, 0.975))
+bs_stats
+```
+
+
+### 1.3
+
+
+```{r}
+binom_freq_ci <- function(df, w = "сэр"){
+  df %>%
+    filter(word == w) %>%
+    mutate(ci_lower = binom.confint(freq, n_words, methods = "exact")$lower,
+           ci_upper = binom.confint(freq, n_words, methods = "exact")$upper) %>%
+    mutate(ci_size = ci_upper - ci_lower) %>%
+    arrange(ci_size) ->
+    bci
+  return(bci)
+}
+
+freq_ci <- binom_freq_ci(df)
+max_freq_ci <- freq_ci[nrow(freq_ci),]
+max_freq_ci
+```
+
+
+### 1.4
+
+
+```{r}
+binom_bayes_ci <- function(df, w = "сэр"){
+  mu <- mean(filter(df, word == w)$average)
+  var <- var(filter(df, word == w)$average)
+  
+  df %>%
+    filter(word == w) %>%
+    mutate(alpha0 = ((1 - mu) / var - 1 / mu) * mu ^ 2) %>%
+    mutate(beta0 = alpha0 * (1 / mu - 1)) %>%
+    mutate(alpha_post = freq + alpha0,
+           beta_post = (n_words - freq) + beta0) %>%
+    mutate(average_post = alpha_post/(alpha_post+beta_post),
+           ci_lower = qbeta(.025, alpha_post, beta_post),
+           ci_upper = qbeta(.975, alpha_post, beta_post)) %>%
+    mutate(ci_size = ci_upper - ci_lower) %>%
+    arrange(ci_size) ->
+    bci
+  
+  return(bci)
+}
+
+
+bayes_ci <- binom_bayes_ci(df)
+max_bayes_ci <- bayes_ci[nrow(bayes_ci),]
+max_bayes_ci
+```
+
+
+### 1.5
+
+
+```{r}
+min_freq_ci <- freq_ci[1,]
+min_freq_ci
+```
+
+
+### 1.6
+
+
+```{r}
+min_bayes_ci <- bayes_ci[1,]
+min_bayes_ci
+```
+
+
+### 1.7
+
+
+```{r}
+print(freq_ci)
+```
+
+```{r}
+print(bayes_ci)
+```
+
+Среднее, полученное методом бутстрепа, с высокой точностью близко к grand_mean, однако полученный доверительный интервал [0.004039357, 0.009230911] покрывает лишь 3 главы из 11, что кажется плохим результатом. 
+Важно отметить довольно значительный разброс средних по главам, из чего, как мне кажется, можно сделать вывод, что встречаемость слова "сэр" в представленных главах не очень-то распределена по единому закону: у нас есть глава с одним сэром на ==2100 слов и глава с 19-ю сэрами на ==2200 слов. Да и вообще в данной выборке глав число глав с экстремально малым числом сэров мало. Возможно, в результате данного неравномерного распределения сэров бутстреп дов. интервал оказался таким, каким оказался. К тому же, 11 глав все же, думаю, мало для хорошей оценки. 
+
+Что касается дов. фреквент. и байес. интервалов, полученные оценки в целом очень близки, а главы с макс. и мин. дов. интервалом для обоих методов получаются одинаковыми. Оценки близки не только для самих дов. интервалов, но и для среднего по главам. Для байесовских интервалов характерен размер незначительно меньше, чем для фреквент. Единственное существенное отличие оценок дов. интервалов двух методов наблюдается для главы 6 с самой маленькой долей сэров: байесовская оценка постериорного среднего и нижней границы дов. интервала больше на порядок, чем при фреквент. оценке. Видимо, исход 6 главы столь экстремален, что не может быть описан априорным распределением, полученным на основе Empircal Bayes Estimation. Однако в целом с помощью данного априорного распределения удалось довольно неплохо приблизить действительное. 
+
+
